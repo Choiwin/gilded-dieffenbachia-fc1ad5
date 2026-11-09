@@ -1,0 +1,1126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<title>5/3/1 + BBB Tracker</title>
+
+<!-- "Add to Home Screen" support on iOS/Android -->
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="5/3/1 + BBB" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="theme-color" content="#15161A" />
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%2315161A'/%3E%3Crect x='10' y='44' width='10' height='12' rx='2' fill='%23C1442D'/%3E%3Crect x='24' y='38' width='8' height='24' rx='2' fill='%234F7CAC'/%3E%3Crect x='36' y='47' width='28' height='6' rx='2' fill='%238B8F97'/%3E%3Crect x='68' y='38' width='8' height='24' rx='2' fill='%234F7CAC'/%3E%3Crect x='80' y='44' width='10' height='12' rx='2' fill='%23C1442D'/%3E%3C/svg%3E" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%2315161A'/%3E%3Crect x='10' y='44' width='10' height='12' rx='2' fill='%23C1442D'/%3E%3Crect x='24' y='38' width='8' height='24' rx='2' fill='%234F7CAC'/%3E%3Crect x='36' y='47' width='28' height='6' rx='2' fill='%238B8F97'/%3E%3Crect x='68' y='38' width='8' height='24' rx='2' fill='%234F7CAC'/%3E%3Crect x='80' y='44' width='10' height='12' rx='2' fill='%23C1442D'/%3E%3C/svg%3E" />
+
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" />
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
+
+<style>
+  html, body { margin: 0; padding: 0; background: #15161A; overscroll-behavior-y: none; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  input[type=number]::-webkit-outer-spin-button,
+  input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type=number] { -moz-appearance: textfield; }
+  .flex { display: flex; }
+  .flex-col { flex-direction: column; }
+  .items-center { align-items: center; }
+  .justify-between { justify-content: space-between; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+  // ---------------------------------------------------------------------
+  // Real browser storage, standing in for Claude artifacts' window.storage
+  // API (same get/set(key,value) => Promise shape) so the app logic below
+  // is otherwise unchanged from the Claude-artifact version. This is real
+  // localStorage on this device/browser — no cross-device sync.
+  // ---------------------------------------------------------------------
+  window.storage = {
+    get: async function (key) {
+      const v = localStorage.getItem(key);
+      if (v === null) throw new Error("not found");
+      return { key: key, value: v };
+    },
+    set: async function (key, value) {
+      localStorage.setItem(key, value);
+      return { key: key, value: value };
+    },
+  };
+</script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef } = React;
+
+/* ---------------------------------------------------------------------
+   TOKENS
+--------------------------------------------------------------------- */
+const C = {
+  bg: "#15161A",
+  panel: "#1E2025",
+  panel2: "#25272D",
+  hairline: "#33353C",
+  chalk: "#ECE9E2",
+  muted: "#8B8F97",
+  faint: "#5B5E66",
+  heavy: "#C1442D",   // main lift / iron-red
+  bbb: "#4F7CAC",     // volume work / steel blue
+  ok: "#7C9473",      // completed / olive
+  amber: "#C9A24B",
+};
+
+const DISPLAY_FONT = "'Oswald', 'Arial Narrow', sans-serif";
+const MONO_FONT = "'JetBrains Mono', 'SF Mono', Consolas, monospace";
+const BODY_FONT = "'Inter', system-ui, sans-serif";
+
+/* ---------------------------------------------------------------------
+   PROGRAM DATA
+--------------------------------------------------------------------- */
+const LIFTS = [
+  { key: "press", label: "Overhead Press", short: "Press", type: "upper" },
+  { key: "deadlift", label: "Deadlift", short: "Deadlift", type: "lower" },
+  { key: "bench", label: "Bench Press", short: "Bench", type: "upper" },
+  { key: "squat", label: "Squat", short: "Squat", type: "lower" },
+];
+
+const WEEK_SCHEMES = {
+  1: [{ pct: 0.65, reps: "5" }, { pct: 0.75, reps: "5" }, { pct: 0.85, reps: "5+" }],
+  2: [{ pct: 0.70, reps: "3" }, { pct: 0.80, reps: "3" }, { pct: 0.90, reps: "3+" }],
+  3: [{ pct: 0.75, reps: "5" }, { pct: 0.85, reps: "3" }, { pct: 0.95, reps: "1+" }],
+  4: [{ pct: 0.40, reps: "5" }, { pct: 0.50, reps: "5" }, { pct: 0.60, reps: "5" }],
+};
+const WEEK_LABELS = { 1: "5/5/5+", 2: "3/3/3+", 3: "5/3/1+", 4: "Deload" };
+
+// Prescribed minimum reps on the AMRAP ("+") set for each week — used to judge a cycle
+const WEEK_TOP_TARGET = { 1: 5, 2: 3, 3: 1 };
+
+const BUMP = { upper: { lb: 5, kg: 2.5 }, lower: { lb: 10, kg: 5 } };
+
+const PLATES = {
+  lb: [
+    { w: 45, color: "#C1442D" },
+    { w: 35, color: "#3A6FA8" },
+    { w: 25, color: "#C9A24B" },
+    { w: 10, color: "#5C8A5C" },
+    { w: 5, color: "#D8D5CC" },
+    { w: 2.5, color: "#2A2C31" },
+  ],
+  kg: [
+    { w: 25, color: "#C1442D" },
+    { w: 20, color: "#3A6FA8" },
+    { w: 15, color: "#C9A24B" },
+    { w: 10, color: "#5C8A5C" },
+    { w: 5, color: "#D8D5CC" },
+    { w: 2.5, color: "#2A2C31" },
+    { w: 1.25, color: "#8A8E96" },
+  ],
+};
+
+const DEFAULT_STATE = {
+  unit: "lb",
+  barWeight: 45,
+  tmPct: 90,
+  bbbPct: 50,
+  amrapThreshold: 0, // reps required OVER the week's prescribed minimum on the last "+" set to earn a bump
+  restTimerSeconds: 120,
+  timer: { running: false, endAt: null, pausedRemaining: null }, // endAt is a real timestamp so it survives tab switches / backgrounding
+  sessionProgress: {}, // { [liftKey]: { main: [bool,bool,bool], bbb: [bool x5] } }
+  oneRM: { squat: 315, bench: 225, deadlift: 405, press: 135 },
+  tm: null,
+  cycle: 1,
+  week: 1,
+  setupDone: false,
+  history: [],
+  tmHistory: [],
+  lastRollover: null, // { cycle, results: [{lift, bumped, reps, target, reason}] }
+};
+
+/* ---------------------------------------------------------------------
+   HELPERS
+--------------------------------------------------------------------- */
+function roundTo(value, incr) {
+  return Math.round(value / incr) * incr;
+}
+function weightIncrement(unit) {
+  return unit === "lb" ? 5 : 2.5;
+}
+function calcTM(oneRM, tmPct, unit) {
+  return roundTo(oneRM * (tmPct / 100), weightIncrement(unit));
+}
+function calcSetWeight(tm, pct, unit) {
+  return roundTo(tm * pct, weightIncrement(unit));
+}
+function calcPlatesPerSide(target, barWeight, unit) {
+  let remaining = Math.max(0, (target - barWeight) / 2);
+  const set = [];
+  for (const p of PLATES[unit]) {
+    while (remaining >= p.w - 0.01) {
+      set.push(p);
+      remaining -= p.w;
+    }
+  }
+  return set;
+}
+function fmt(n) {
+  return Number.isInteger(n) ? String(n) : n.toFixed(1);
+}
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
+}
+function emptyProgress() {
+  return { main: [false, false, false], bbb: [false, false, false, false, false] };
+}
+function mmss(totalSeconds) {
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+function playBeep() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new Ctx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = "sine";
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.42);
+  } catch (e) {
+    // audio not available — silently skip
+  }
+}
+
+/* ---------------------------------------------------------------------
+   PLATE VISUALIZER — signature element
+--------------------------------------------------------------------- */
+function PlateBar({ target, barWeight, unit }) {
+  const plates = calcPlatesPerSide(target, barWeight, unit);
+  const maxH = 84;
+  const renderStack = (mirror) => {
+    const items = mirror ? [...plates].reverse() : plates;
+    return items.map((p, i) => {
+      const h = Math.max(30, Math.min(maxH, 30 + p.w * 1.1));
+      return (
+        <div
+          key={i}
+          title={`${fmt(p.w)} ${unit}`}
+          style={{
+            width: 10,
+            height: h,
+            background: p.color,
+            borderRadius: 2,
+            border: "1px solid rgba(0,0,0,0.35)",
+            flexShrink: 0,
+          }}
+        />
+      );
+    });
+  };
+  return (
+    <div className="flex items-center" style={{ gap: 2 }}>
+      <div style={{ width: 14, height: 6, background: C.faint, borderRadius: 2 }} />
+      <div className="flex items-center" style={{ gap: 2 }}>{renderStack(true)}</div>
+      <div style={{ width: 54, height: 10, background: "#6B6E76", borderRadius: 2 }} />
+      <div className="flex items-center" style={{ gap: 2 }}>{renderStack(false)}</div>
+      <div style={{ width: 14, height: 6, background: C.faint, borderRadius: 2 }} />
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------
+   LIGHTWEIGHT INLINE CHART (no external charting library needed)
+--------------------------------------------------------------------- */
+function MiniLineChart({ data, series, height }) {
+  height = height || 200;
+  const width = 600;
+  const padding = { top: 10, right: 10, bottom: 24, left: 8 };
+  if (!data.length) return null;
+
+  const xs = data.map((d) => d.cycle);
+  const allVals = data.flatMap((d) => series.map((s) => d[s.key]).filter((v) => v != null));
+  const minY = Math.min(...allVals);
+  const maxY = Math.max(...allVals);
+  const yPad = (maxY - minY) * 0.15 || 10;
+  const yMin = minY - yPad;
+  const yMax = maxY + yPad;
+  const xMin = Math.min(...xs);
+  const xMax = Math.max(...xs);
+
+  const xScale = (x) =>
+    padding.left + ((x - xMin) / (xMax - xMin || 1)) * (width - padding.left - padding.right);
+  const yScale = (y) =>
+    height - padding.bottom - ((y - yMin) / (yMax - yMin || 1)) * (height - padding.top - padding.bottom);
+
+  return (
+    <div>
+      <svg viewBox={`0 0 ${width} ${height}`} style={{ width: "100%", height, display: "block" }}>
+        {[0, 0.25, 0.5, 0.75, 1].map((f, i) => {
+          const y = padding.top + f * (height - padding.top - padding.bottom);
+          return (
+            <line key={i} x1={padding.left} x2={width - padding.right} y1={y} y2={y} stroke={C.hairline} strokeDasharray="3 3" />
+          );
+        })}
+        {xs.map((x) => (
+          <text key={x} x={xScale(x)} y={height - 6} fontSize="10" fill={C.muted} textAnchor="middle" fontFamily={MONO_FONT}>
+            C{x}
+          </text>
+        ))}
+        {series.map((s) => {
+          const pts = data.filter((d) => d[s.key] != null);
+          const line = pts.map((d) => `${xScale(d.cycle)},${yScale(d[s.key])}`).join(" ");
+          return (
+            <g key={s.key}>
+              <polyline points={line} fill="none" stroke={s.color} strokeWidth="2" />
+              {pts.map((d, i) => (
+                <circle key={i} cx={xScale(d.cycle)} cy={yScale(d[s.key])} r="3" fill={s.color} />
+              ))}
+            </g>
+          );
+        })}
+      </svg>
+      <div className="flex items-center" style={{ gap: 14, marginTop: 8, flexWrap: "wrap" }}>
+        {series.map((s) => (
+          <div key={s.key} className="flex items-center" style={{ gap: 5 }}>
+            <div style={{ width: 8, height: 8, borderRadius: 4, background: s.color }} />
+            <span style={{ fontSize: 11, color: C.muted, fontFamily: MONO_FONT }}>{s.name}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------
+   SMALL UI PRIMITIVES
+--------------------------------------------------------------------- */
+function Panel({ children, style }) {
+  return (
+    <div
+      style={{
+        background: C.panel,
+        border: `1px solid ${C.hairline}`,
+        borderRadius: 10,
+        padding: 16,
+        ...style,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+function Label({ children }) {
+  return (
+    <div
+      style={{
+        fontFamily: BODY_FONT,
+        fontSize: 11,
+        letterSpacing: "0.08em",
+        textTransform: "uppercase",
+        color: C.muted,
+        marginBottom: 6,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+function NumberField({ value, onChange, suffix }) {
+  const [text, setText] = useState(String(value));
+
+  useEffect(() => {
+    if (parseFloat(text) !== value) setText(String(value));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  function handleChange(e) {
+    const raw = e.target.value;
+    setText(raw);
+    if (raw === "" || raw === "-" || raw === ".") return;
+    const num = parseFloat(raw);
+    if (!Number.isNaN(num)) onChange(num);
+  }
+
+  function handleBlur() {
+    if (text === "" || text === "-" || Number.isNaN(parseFloat(text))) {
+      setText(String(value));
+    }
+  }
+
+  return (
+    <div className="flex items-center" style={{ gap: 6 }}>
+      <input
+        type="number"
+        value={text}
+        onChange={handleChange}
+        onBlur={handleBlur}
+        style={{
+          background: C.panel2,
+          border: `1px solid ${C.hairline}`,
+          color: C.chalk,
+          borderRadius: 6,
+          padding: "8px 10px",
+          fontFamily: MONO_FONT,
+          fontSize: 16,
+          width: "100%",
+        }}
+      />
+      {suffix && <span style={{ color: C.muted, fontFamily: MONO_FONT, fontSize: 13 }}>{suffix}</span>}
+    </div>
+  );
+}
+function Btn({ children, onClick, variant, disabled, style }) {
+  variant = variant || "default";
+  const styles = {
+    default: { background: C.panel2, color: C.chalk, border: `1px solid ${C.hairline}` },
+    heavy: { background: C.heavy, color: "#fff", border: `1px solid ${C.heavy}` },
+    ghost: { background: "transparent", color: C.muted, border: `1px solid ${C.hairline}` },
+  };
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        ...styles[variant],
+        fontFamily: BODY_FONT,
+        fontWeight: 600,
+        fontSize: 13,
+        padding: "10px 14px",
+        borderRadius: 8,
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.4 : 1,
+        ...style,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+/* ---------------------------------------------------------------------
+   MAIN APP
+--------------------------------------------------------------------- */
+function App() {
+  const [state, setState] = useState(DEFAULT_STATE);
+  const [loaded, setLoaded] = useState(false);
+  const [tab, setTab] = useState("train");
+  const [activeLift, setActiveLift] = useState("squat");
+  const [amrapInput, setAmrapInput] = useState("");
+  const [savedFlash, setSavedFlash] = useState(false);
+  const saveTimer = useRef(null);
+
+  // Load persisted state
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await window.storage.get("531-bbb-state");
+        if (res && res.value) {
+          const parsed = JSON.parse(res.value);
+          setState({ ...DEFAULT_STATE, ...parsed });
+        }
+      } catch (e) {
+        // no saved state yet — use defaults
+      }
+      setLoaded(true);
+    })();
+  }, []);
+
+  // Persist on change
+  useEffect(() => {
+    if (!loaded) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(async () => {
+      try {
+        await window.storage.set("531-bbb-state", JSON.stringify(state));
+        setSavedFlash(true);
+        setTimeout(() => setSavedFlash(false), 900);
+      } catch (e) {
+        console.error("save failed", e);
+      }
+    }, 400);
+  }, [state, loaded]);
+
+  /* --- Rest timer engine (lives at App level so it survives tab switches) ---
+     endAt is a real wall-clock timestamp, not a decrementing counter, so the
+     remaining time is always correct even if this tab was backgrounded or the
+     page was reloaded while it was running — we just recompute from Date.now().
+     These hooks must run on every render (including the "Loading…" render),
+     so they're declared before the early-return below. */
+  const [tick, setTick] = useState(0);
+  const beepFiredRef = useRef(false);
+
+  useEffect(() => {
+    if (!state.timer.running) return;
+    const id = setInterval(() => setTick((t) => t + 1), 250);
+    return () => clearInterval(id);
+  }, [state.timer.running]);
+
+  const timerRemaining = (() => {
+    const t = state.timer;
+    if (t.running && t.endAt) return Math.max(0, Math.ceil((t.endAt - Date.now()) / 1000));
+    if (t.pausedRemaining != null) return t.pausedRemaining;
+    return state.restTimerSeconds;
+  })();
+
+  useEffect(() => {
+    if (state.timer.running && timerRemaining === 0) {
+      if (!beepFiredRef.current) {
+        beepFiredRef.current = true;
+        playBeep();
+        setState((s) => ({ ...s, timer: { running: false, endAt: null, pausedRemaining: 0 } }));
+      }
+    } else if (timerRemaining > 0) {
+      beepFiredRef.current = false;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timerRemaining, state.timer.running, tick]);
+
+  if (!loaded) {
+    return (
+      <div style={{ background: C.bg, height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: C.muted, fontFamily: BODY_FONT }}>
+        Loading…
+      </div>
+    );
+  }
+
+  const unit = state.unit;
+  const incr = weightIncrement(unit);
+
+  function startSetup(newSettings) {
+    const tm = {};
+    LIFTS.forEach((l) => {
+      tm[l.key] = calcTM(newSettings.oneRM[l.key], newSettings.tmPct, newSettings.unit);
+    });
+    setState((s) => ({
+      ...s,
+      ...newSettings,
+      tm,
+      setupDone: true,
+      tmHistory: [...s.tmHistory, { cycle: s.cycle, ...tm }],
+    }));
+  }
+
+  // Look at Week 3's logged AMRAP set for a lift (the last "+" set before deload)
+  // and decide whether it earned a bump. No logged data defaults to "bump" so an
+  // unlogged session never silently blocks progress.
+  function evaluateLiftForBump(history, cycle, liftKey, threshold) {
+    const week3Entries = history.filter(
+      (h) => h.cycle === cycle && h.week === 3 && h.lift === liftKey
+    );
+    if (week3Entries.length === 0) {
+      return { bumped: true, reps: null, target: WEEK_TOP_TARGET[3], reason: "No Week 3 AMRAP logged — bumped by default" };
+    }
+    const entry = week3Entries[0];
+    const topSet = entry.mainSets[entry.mainSets.length - 1];
+    const reps = topSet?.actualReps;
+    const target = WEEK_TOP_TARGET[3];
+    if (reps === null || reps === undefined || reps === "") {
+      return { bumped: true, reps: null, target, reason: "AMRAP reps not recorded — bumped by default" };
+    }
+    const repsNum = Number(reps);
+    const needed = target + threshold;
+    if (repsNum >= needed) {
+      return { bumped: true, reps: repsNum, target, reason: `Hit ${repsNum} reps (needed ${needed}+)` };
+    }
+    return { bumped: false, reps: repsNum, target, reason: `Only ${repsNum} reps (needed ${needed}+) — TM held flat` };
+  }
+
+  function advanceWeek() {
+    setState((s) => {
+      let { week, cycle, tm } = s;
+      if (week < 4) {
+        return { ...s, week: week + 1, lastRollover: null };
+      }
+      const results = LIFTS.map((l) => {
+        const evalResult = evaluateLiftForBump(s.history, cycle, l.key, s.amrapThreshold);
+        return { lift: l.key, label: l.short, ...evalResult };
+      });
+      const newTm = { ...tm };
+      results.forEach((r) => {
+        if (r.bumped) {
+          const bump = BUMP[LIFTS.find((l) => l.key === r.lift).type][s.unit];
+          newTm[r.lift] = roundTo(tm[r.lift] + bump, incr);
+        }
+      });
+      const newCycle = cycle + 1;
+      return {
+        ...s,
+        week: 1,
+        cycle: newCycle,
+        tm: newTm,
+        tmHistory: [...s.tmHistory, { cycle: newCycle, ...newTm }],
+        lastRollover: { cycle: newCycle, results },
+      };
+    });
+  }
+
+  function logWorkout(lift, mainSets, bbbWeight, actualAmrap) {
+    const entry = {
+      date: todayISO(),
+      cycle: state.cycle,
+      week: state.week,
+      lift,
+      mainSets: mainSets.map((s, i) => ({
+        ...s,
+        actualReps:
+          i === mainSets.length - 1 && actualAmrap !== "" && actualAmrap !== undefined
+            ? Number(actualAmrap)
+            : null,
+      })),
+      bbbWeight,
+      bbbSets: 5,
+      bbbReps: 10,
+    };
+    setState((s) => ({
+      ...s,
+      history: [entry, ...s.history],
+      sessionProgress: { ...s.sessionProgress, [lift]: emptyProgress() },
+    }));
+    setAmrapInput("");
+  }
+
+  function toggleSet(liftKey, group, index) {
+    setState((s) => {
+      const current = s.sessionProgress[liftKey] || emptyProgress();
+      const arr = [...current[group]];
+      arr[index] = !arr[index];
+      return {
+        ...s,
+        sessionProgress: {
+          ...s.sessionProgress,
+          [liftKey]: { ...current, [group]: arr },
+        },
+      };
+    });
+  }
+
+  function startTimer() {
+    setState((s) => ({
+      ...s,
+      timer: { running: true, endAt: Date.now() + s.restTimerSeconds * 1000, pausedRemaining: null },
+    }));
+  }
+  function pauseTimer() {
+    setState((s) => {
+      const t = s.timer;
+      const remaining =
+        t.running && t.endAt ? Math.max(0, Math.ceil((t.endAt - Date.now()) / 1000)) : t.pausedRemaining ?? s.restTimerSeconds;
+      return { ...s, timer: { running: false, endAt: null, pausedRemaining: remaining } };
+    });
+  }
+  function resetTimer() {
+    setState((s) => ({ ...s, timer: { running: false, endAt: null, pausedRemaining: null } }));
+  }
+
+  return (
+    <div style={{ background: C.bg, minHeight: "100vh", fontFamily: BODY_FONT, color: C.chalk, paddingBottom: 80 }}>
+      <div style={{ padding: "22px 18px 14px", borderBottom: `1px solid ${C.hairline}` }}>
+        <div className="flex items-center justify-between">
+          <div>
+            <div style={{ fontFamily: DISPLAY_FONT, fontSize: 26, fontWeight: 700, letterSpacing: "0.02em", lineHeight: 1 }}>
+              5/3/1 <span style={{ color: C.heavy }}>+ BBB</span>
+            </div>
+            <div style={{ fontFamily: MONO_FONT, fontSize: 12, color: C.muted, marginTop: 4 }}>
+              CYCLE {state.cycle} · WEEK {state.week} · {WEEK_LABELS[state.week]}
+            </div>
+          </div>
+          <div style={{ fontFamily: MONO_FONT, fontSize: 10, color: savedFlash ? C.ok : "transparent", transition: "color 0.3s" }}>
+            SAVED
+          </div>
+        </div>
+      </div>
+
+      <div style={{ padding: 16, maxWidth: 640, margin: "0 auto" }}>
+        {!state.setupDone && tab !== "setup" ? (
+          <Panel>
+            <div style={{ fontFamily: DISPLAY_FONT, fontSize: 18, marginBottom: 8 }}>Set up your training maxes</div>
+            <div style={{ fontSize: 13, color: C.muted, marginBottom: 14 }}>
+              Enter your 1-rep maxes once. The app calculates training maxes and handles progression from there.
+            </div>
+            <Btn variant="heavy" onClick={() => setTab("setup")}>Go to setup →</Btn>
+          </Panel>
+        ) : tab === "setup" ? (
+          <SetupTab state={state} onSave={(v) => { startSetup(v); setTab("train"); }} />
+        ) : tab === "train" ? (
+          <TrainTab
+            state={state}
+            activeLift={activeLift}
+            setActiveLift={setActiveLift}
+            amrapInput={amrapInput}
+            setAmrapInput={setAmrapInput}
+            onLog={logWorkout}
+            onAdvanceWeek={advanceWeek}
+            onToggleSet={toggleSet}
+            onChangeRestSeconds={(v) => setState((s) => ({ ...s, restTimerSeconds: v }))}
+            timerRemaining={timerRemaining}
+            timerRunning={state.timer.running}
+            onStartTimer={startTimer}
+            onPauseTimer={pauseTimer}
+            onResetTimer={resetTimer}
+          />
+        ) : (
+          <HistoryTab state={state} />
+        )}
+      </div>
+
+      <div
+        style={{
+          position: "fixed",
+          bottom: 0,
+          left: 0,
+          right: 0,
+          background: C.panel,
+          borderTop: `1px solid ${C.hairline}`,
+          display: "flex",
+          paddingBottom: "env(safe-area-inset-bottom)",
+        }}
+      >
+        {[
+          { id: "train", label: "Train" },
+          { id: "history", label: "History" },
+          { id: "setup", label: "Setup" },
+        ].map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            style={{
+              flex: 1,
+              padding: "14px 0",
+              background: "transparent",
+              border: "none",
+              color: tab === t.id ? C.chalk : C.muted,
+              borderTop: tab === t.id ? `2px solid ${C.heavy}` : "2px solid transparent",
+              fontFamily: BODY_FONT,
+              fontWeight: 600,
+              fontSize: 13,
+              cursor: "pointer",
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------
+   SETUP TAB
+--------------------------------------------------------------------- */
+function SetupTab({ state, onSave }) {
+  const [unit, setUnit] = useState(state.unit);
+  const [barWeight, setBarWeight] = useState(state.barWeight);
+  const [tmPct, setTmPct] = useState(state.tmPct);
+  const [bbbPct, setBbbPct] = useState(state.bbbPct);
+  const [amrapThreshold, setAmrapThreshold] = useState(state.amrapThreshold);
+  const [oneRM, setOneRM] = useState(state.oneRM);
+
+  return (
+    <div className="flex flex-col" style={{ gap: 14 }}>
+      <Panel>
+        <Label>Unit</Label>
+        <div className="flex" style={{ gap: 8 }}>
+          {["lb", "kg"].map((u) => (
+            <Btn key={u} variant={unit === u ? "heavy" : "default"} onClick={() => setUnit(u)} style={{ flex: 1 }}>
+              {u.toUpperCase()}
+            </Btn>
+          ))}
+        </div>
+        <div style={{ marginTop: 12 }}>
+          <Label>Bar weight</Label>
+          <NumberField value={barWeight} onChange={setBarWeight} suffix={unit} />
+        </div>
+      </Panel>
+
+      <Panel>
+        <Label>One-rep maxes</Label>
+        <div className="flex flex-col" style={{ gap: 10 }}>
+          {LIFTS.map((l) => (
+            <div key={l.key} className="flex items-center" style={{ gap: 10 }}>
+              <div style={{ width: 100, fontSize: 13, color: C.chalk }}>{l.label}</div>
+              <NumberField value={oneRM[l.key]} onChange={(v) => setOneRM((o) => ({ ...o, [l.key]: v }))} suffix={unit} />
+            </div>
+          ))}
+        </div>
+      </Panel>
+
+      <Panel>
+        <Label>Training max % (Wendler standard: 90%)</Label>
+        <NumberField value={tmPct} onChange={setTmPct} suffix="%" />
+        <div style={{ marginTop: 12 }}>
+          <Label>Boring But Big % of TM (typical: 50–60%)</Label>
+          <NumberField value={bbbPct} onChange={setBbbPct} suffix="%" />
+        </div>
+      </Panel>
+
+      <Panel>
+        <Label>Progression rule</Label>
+        <div style={{ fontSize: 12, color: C.muted, marginBottom: 10 }}>
+          At the end of each cycle, a lift's TM only bumps if its Week 3 AMRAP set ("1+")
+          hit at least this many reps <em>over</em> the prescribed minimum (1 rep). Set to 0
+          to always bump when the minimum is met — set higher to require a bigger buffer.
+          A lift that misses holds its TM flat for the next cycle instead of increasing.
+        </div>
+        <NumberField value={amrapThreshold} onChange={setAmrapThreshold} suffix="reps over target" />
+      </Panel>
+
+      <Panel>
+        <Label>Preview — training max</Label>
+        <div className="flex flex-col" style={{ gap: 6 }}>
+          {LIFTS.map((l) => (
+            <div key={l.key} className="flex items-center justify-between" style={{ fontFamily: MONO_FONT, fontSize: 14 }}>
+              <span style={{ color: C.muted }}>{l.short}</span>
+              <span style={{ color: C.heavy, fontWeight: 700 }}>
+                {fmt(calcTM(oneRM[l.key], tmPct, unit))} {unit}
+              </span>
+            </div>
+          ))}
+        </div>
+      </Panel>
+
+      <Btn
+        variant="heavy"
+        onClick={() => onSave({ unit, barWeight, tmPct, bbbPct, amrapThreshold, oneRM })}
+        style={{ padding: "14px 0" }}
+      >
+        {state.setupDone ? "Update & recalculate" : "Start program"}
+      </Btn>
+      {state.setupDone && (
+        <div style={{ fontSize: 12, color: C.muted, textAlign: "center" }}>
+          Updating resets your training max from these 1RMs — cycle/week and history are kept.
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------
+   TRAIN TAB
+--------------------------------------------------------------------- */
+function TrainTab({
+  state,
+  activeLift,
+  setActiveLift,
+  amrapInput,
+  setAmrapInput,
+  onLog,
+  onAdvanceWeek,
+  onToggleSet,
+  onChangeRestSeconds,
+  timerRemaining,
+  timerRunning,
+  onStartTimer,
+  onPauseTimer,
+  onResetTimer,
+}) {
+  const lift = LIFTS.find((l) => l.key === activeLift);
+  const tm = state.tm[activeLift];
+  const scheme = WEEK_SCHEMES[state.week];
+  const mainSets = scheme.map((s) => ({ ...s, weight: calcSetWeight(tm, s.pct, state.unit) }));
+  const bbbWeight = calcSetWeight(tm, state.bbbPct / 100, state.unit);
+  const isAmrapWeek = state.week !== 4;
+  const progress = state.sessionProgress[activeLift] || emptyProgress();
+  const duration = state.restTimerSeconds;
+
+  function handleToggle(group, index) {
+    const wasChecked = progress[group][index];
+    onToggleSet(activeLift, group, index);
+    if (!wasChecked) onStartTimer();
+  }
+
+  const bbbCompletedCount = progress.bbb.filter(Boolean).length;
+  const timerPct = duration > 0 ? timerRemaining / duration : 0;
+  const timerColor = timerRemaining === 0 ? C.ok : timerRunning ? C.heavy : C.muted;
+
+  return (
+    <div className="flex flex-col" style={{ gap: 14 }}>
+      {state.lastRollover && state.lastRollover.cycle === state.cycle && (
+        <Panel style={{ borderColor: C.amber }}>
+          <div style={{ fontFamily: DISPLAY_FONT, fontSize: 15, color: C.amber, marginBottom: 8 }}>
+            Cycle {state.lastRollover.cycle} — progression results
+          </div>
+          <div className="flex flex-col" style={{ gap: 6 }}>
+            {state.lastRollover.results.map((r) => (
+              <div key={r.lift} className="flex items-center justify-between" style={{ fontSize: 12 }}>
+                <span style={{ color: C.chalk, fontWeight: 600 }}>{r.label}</span>
+                <span style={{ color: r.bumped ? C.ok : C.heavy, fontFamily: MONO_FONT }}>
+                  {r.bumped ? "▲ bumped" : "— held"} · {r.reason}
+                </span>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
+
+      <Panel>
+        <div className="flex items-center justify-between" style={{ marginBottom: 10 }}>
+          <Label>Rest timer</Label>
+          <div className="flex items-center" style={{ gap: 6 }}>
+            <input
+              type="number"
+              value={duration}
+              onChange={(e) => onChangeRestSeconds(Math.max(0, parseInt(e.target.value, 10) || 0))}
+              style={{
+                width: 56,
+                background: C.panel2,
+                border: `1px solid ${C.hairline}`,
+                color: C.chalk,
+                borderRadius: 6,
+                padding: "4px 6px",
+                fontFamily: MONO_FONT,
+                fontSize: 12,
+                textAlign: "center",
+              }}
+            />
+            <span style={{ fontSize: 11, color: C.muted }}>sec</span>
+          </div>
+        </div>
+        <div className="flex items-center justify-between">
+          <div
+            style={{
+              fontFamily: MONO_FONT,
+              fontSize: 36,
+              fontWeight: 700,
+              color: timerColor,
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            {mmss(timerRemaining)}
+          </div>
+          <div className="flex items-center" style={{ gap: 8 }}>
+            {[60, 90, 120, 180].map((p) => (
+              <button
+                key={p}
+                onClick={() => onChangeRestSeconds(p)}
+                style={{
+                  background: duration === p ? "rgba(193,68,45,0.15)" : C.panel2,
+                  border: `1px solid ${duration === p ? C.heavy : C.hairline}`,
+                  color: duration === p ? C.chalk : C.muted,
+                  borderRadius: 6,
+                  padding: "4px 8px",
+                  fontFamily: MONO_FONT,
+                  fontSize: 11,
+                  cursor: "pointer",
+                }}
+              >
+                {p < 120 ? `${p}s` : `${p / 60}m`}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div style={{ height: 4, background: C.hairline, borderRadius: 2, marginTop: 12, overflow: "hidden" }}>
+          <div style={{ height: "100%", width: `${timerPct * 100}%`, background: timerColor, transition: "width 1s linear" }} />
+        </div>
+        <div className="flex" style={{ gap: 8, marginTop: 12 }}>
+          <Btn variant={timerRunning ? "default" : "heavy"} onClick={timerRunning ? onPauseTimer : onStartTimer} style={{ flex: 1 }}>
+            {timerRunning ? "Pause" : timerRemaining === 0 ? "Restart" : "Start"}
+          </Btn>
+          <Btn variant="ghost" onClick={onResetTimer} style={{ flex: 1 }}>
+            Reset
+          </Btn>
+        </div>
+        <div style={{ fontSize: 11, color: C.faint, marginTop: 8 }}>
+          Auto-starts whenever you check off a set below. Keeps running if you switch tabs.
+        </div>
+      </Panel>
+
+      <div className="flex" style={{ gap: 8, overflowX: "auto" }}>
+        {LIFTS.map((l) => (
+          <button
+            key={l.key}
+            onClick={() => setActiveLift(l.key)}
+            style={{
+              flex: "1 0 auto",
+              padding: "10px 14px",
+              borderRadius: 8,
+              border: `1px solid ${activeLift === l.key ? C.heavy : C.hairline}`,
+              background: activeLift === l.key ? "rgba(193,68,45,0.15)" : C.panel,
+              color: activeLift === l.key ? C.chalk : C.muted,
+              fontFamily: BODY_FONT,
+              fontWeight: 600,
+              fontSize: 13,
+              cursor: "pointer",
+            }}
+          >
+            {l.short}
+          </button>
+        ))}
+      </div>
+
+      <Panel>
+        <div className="flex items-center justify-between" style={{ marginBottom: 4 }}>
+          <div style={{ fontFamily: DISPLAY_FONT, fontSize: 20 }}>{lift.label}</div>
+          <div style={{ fontFamily: MONO_FONT, fontSize: 13, color: C.muted }}>TM {fmt(tm)} {state.unit}</div>
+        </div>
+        <div style={{ fontSize: 12, color: C.muted, marginBottom: 14 }}>Main work — {WEEK_LABELS[state.week]}</div>
+
+        <div className="flex flex-col" style={{ gap: 12 }}>
+          {mainSets.map((s, i) => (
+            <div key={i} style={{ borderBottom: i < mainSets.length - 1 ? `1px solid ${C.hairline}` : "none", paddingBottom: 12 }}>
+              <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
+                <label className="flex items-center" style={{ gap: 10, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={progress.main[i]}
+                    onChange={() => handleToggle("main", i)}
+                    style={{ width: 18, height: 18, accentColor: C.heavy, cursor: "pointer" }}
+                  />
+                  <div style={{ fontFamily: MONO_FONT, fontSize: 15, opacity: progress.main[i] ? 0.55 : 1 }}>
+                    <span style={{ color: C.heavy, fontWeight: 700, textDecoration: progress.main[i] ? "line-through" : "none" }}>
+                      {fmt(s.weight)}
+                    </span>
+                    <span style={{ color: C.muted }}> {state.unit} × {s.reps}</span>
+                  </div>
+                </label>
+                <div style={{ fontFamily: MONO_FONT, fontSize: 11, color: C.faint }}>{Math.round(s.pct * 100)}% TM</div>
+              </div>
+              <PlateBar target={s.weight} barWeight={state.barWeight} unit={state.unit} />
+              {i === mainSets.length - 1 && isAmrapWeek && (
+                <div className="flex items-center" style={{ gap: 8, marginTop: 10 }}>
+                  <span style={{ fontSize: 12, color: C.muted }}>AMRAP reps achieved:</span>
+                  <input
+                    type="number"
+                    value={amrapInput}
+                    onChange={(e) => setAmrapInput(e.target.value)}
+                    placeholder={s.reps}
+                    style={{
+                      width: 60,
+                      background: C.panel2,
+                      border: `1px solid ${C.hairline}`,
+                      color: C.chalk,
+                      borderRadius: 6,
+                      padding: "6px 8px",
+                      fontFamily: MONO_FONT,
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </Panel>
+
+      <Panel>
+        <div className="flex items-center justify-between" style={{ marginBottom: 4 }}>
+          <div style={{ fontFamily: DISPLAY_FONT, fontSize: 18, color: C.bbb }}>Boring But Big</div>
+          <div style={{ fontFamily: MONO_FONT, fontSize: 11, color: C.faint }}>{state.bbbPct}% TM</div>
+        </div>
+        <div style={{ fontFamily: MONO_FONT, fontSize: 15, marginBottom: 6 }}>
+          <span style={{ color: C.bbb, fontWeight: 700 }}>{fmt(bbbWeight)}</span>
+          <span style={{ color: C.muted }}> {state.unit} × 5 sets × 10 reps</span>
+        </div>
+        <div style={{ fontSize: 12, color: bbbCompletedCount === 5 ? C.ok : C.muted, marginBottom: 10 }}>
+          {bbbCompletedCount === 5 ? "All 5 sets complete ✓" : `Set ${bbbCompletedCount + 1} of 5`}
+        </div>
+        <PlateBar target={bbbWeight} barWeight={state.barWeight} unit={state.unit} />
+        <div className="flex items-center" style={{ gap: 10, marginTop: 14 }}>
+          {progress.bbb.map((checked, i) => (
+            <label key={i} className="flex flex-col items-center" style={{ gap: 4, cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={() => handleToggle("bbb", i)}
+                style={{ width: 20, height: 20, accentColor: C.bbb, cursor: "pointer" }}
+              />
+              <span style={{ fontSize: 10, color: C.faint, fontFamily: MONO_FONT }}>{i + 1}</span>
+            </label>
+          ))}
+        </div>
+      </Panel>
+
+      <Btn
+        variant="heavy"
+        onClick={() => onLog(activeLift, mainSets, bbbWeight, amrapInput)}
+        style={{ padding: "14px 0" }}
+      >
+        Log {lift.short} workout
+      </Btn>
+
+      <Panel style={{ background: C.panel2 }}>
+        <div className="flex items-center justify-between">
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>Ready for next week?</div>
+            <div style={{ fontSize: 12, color: C.muted }}>
+              {state.week < 4
+                ? "Advances the wave; weights recalculate automatically."
+                : "Advances to a new cycle. Each lift bumps (+5/+10 lb or +2.5/+5 kg) only if its Week 3 AMRAP hit the required reps — otherwise TM holds flat."}
+            </div>
+          </div>
+          <Btn onClick={onAdvanceWeek}>Advance →</Btn>
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------
+   HISTORY TAB
+--------------------------------------------------------------------- */
+function HistoryTab({ state }) {
+  const chartData = {};
+  state.tmHistory.forEach((row) => {
+    chartData[row.cycle] = { ...chartData[row.cycle], cycle: row.cycle, ...row };
+  });
+  const data = Object.values(chartData).sort((a, b) => a.cycle - b.cycle);
+  const chartSeries = LIFTS.map((l, i) => ({
+    key: l.key,
+    name: l.short,
+    color: [C.heavy, C.bbb, C.amber, C.ok][i],
+  }));
+
+  return (
+    <div className="flex flex-col" style={{ gap: 14 }}>
+      <Panel>
+        <Label>Training max progression</Label>
+        {data.length > 1 ? (
+          <MiniLineChart data={data} series={chartSeries} height={200} />
+        ) : (
+          <div style={{ fontSize: 13, color: C.muted }}>Complete a full cycle to see progression here.</div>
+        )}
+      </Panel>
+
+      <Panel>
+        <Label>Session log</Label>
+        {state.history.length === 0 ? (
+          <div style={{ fontSize: 13, color: C.muted }}>No sessions logged yet. Log a workout from the Train tab.</div>
+        ) : (
+          <div className="flex flex-col" style={{ gap: 10 }}>
+            {state.history.map((h, i) => {
+              const liftMeta = LIFTS.find((l) => l.key === h.lift);
+              const topSet = h.mainSets[h.mainSets.length - 1];
+              return (
+                <div key={i} style={{ borderBottom: i < state.history.length - 1 ? `1px solid ${C.hairline}` : "none", paddingBottom: 10 }}>
+                  <div className="flex items-center justify-between">
+                    <div style={{ fontWeight: 600, fontSize: 14 }}>{liftMeta?.label}</div>
+                    <div style={{ fontFamily: MONO_FONT, fontSize: 11, color: C.muted }}>{h.date}</div>
+                  </div>
+                  <div style={{ fontSize: 12, color: C.muted }}>
+                    Cycle {h.cycle} · {WEEK_LABELS[h.week]}
+                    {topSet?.actualReps ? (
+                      <span style={{ color: C.ok }}> · Top set: {fmt(topSet.weight)} × {topSet.actualReps}</span>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
